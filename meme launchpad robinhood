@@ -1,0 +1,152 @@
+solidity
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.24;
+
+import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+
+contract MemeToken is ERC20 {
+    address public creator;
+
+    constructor(
+        string memory tokenName,
+        string memory tokenSymbol,
+        uint256 initialSupply,
+        address tokenCreator
+    ) ERC20(tokenName, tokenSymbol) {
+        require(initialSupply > 0, "Supply must be positive");
+
+        creator = tokenCreator;
+
+        // Mint the entire supply to the creator.
+        _mint(tokenCreator, initialSupply * 10 ** decimals());
+    }
+}
+
+contract MemeLaunchpad {
+    address public owner;
+
+    uint256 public creationFee = 0.001 ether;
+
+    address[] public launchedTokens;
+
+    mapping(address => address[]) public creatorTokens;
+
+    event TokenCreated(
+        address indexed tokenAddress,
+        address indexed creator,
+        string name,
+        string symbol,
+        uint256 totalSupply
+    );
+
+    event CreationFeeUpdated(uint256 newFee);
+
+    modifier onlyOwner() {
+        require(msg.sender == owner, "Not the owner");
+        _;
+    }
+
+    constructor() {
+        owner = msg.sender;
+    }
+
+    function createToken(
+        string calldata name,
+        string calldata symbol,
+        uint256 initialSupply
+    ) external payable returns (address) {
+        require(msg.value >= creationFee, "Insufficient creation fee");
+        require(bytes(name).length > 0, "Name required");
+        require(bytes(symbol).length > 0, "Symbol required");
+        require(initialSupply > 0, "Supply must be positive");
+        require(initialSupply <= 1_000_000_000_000_000_000,
+            "Supply too large");
+
+        MemeToken token = new MemeToken(
+            name,
+            symbol,
+            initialSupply,
+            msg.sender
+        );
+
+        address tokenAddress = address(token);
+
+        launchedTokens.push(tokenAddress);
+        creatorTokens[msg.sender].push(tokenAddress);
+
+        emit TokenCreated(
+            tokenAddress,
+            msg.sender,
+            name,
+            symbol,
+            initialSupply
+        );
+
+        // Refund any excess payment.
+        if (msg.value > creationFee) {
+            (bool refunded, ) = payable(msg.sender).call{
+                value: msg.value - creationFee
+            }("");
+            require(refunded, "Refund failed");
+        }
+
+        return tokenAddress;
+    }
+
+    function setCreationFee(uint256 newFee)
+        external
+        onlyOwner
+    {
+        creationFee = newFee;
+        emit CreationFeeUpdated(newFee);
+    }
+
+    function withdrawFees() external onlyOwner {
+        uint256 balance = address(this).balance;
+        require(balance > 0, "No fees available");
+
+        (bool success, ) = payable(owner).call{value: balance}("");
+        require(success, "Withdrawal failed");
+    }
+
+    function getTokenCount() external view returns (uint256) {
+        return launchedTokens.length;
+    }
+
+    function getCreatorTokenCount(address creator)
+        external
+        view
+        returns (uint256)
+    {
+        return creatorTokens[creator].length;
+    }
+
+    function getTokens(
+        uint256 start,
+        uint256 count
+    ) external view returns (address[] memory) {
+        require(start <= launchedTokens.length, "Invalid start");
+
+        uint256 remaining = launchedTokens.length - start;
+
+        if (count > remaining) {
+            count = remaining;
+        }
+
+        address[] memory result = new address[](count);
+
+        for (uint256 i = 0; i < count; i++) {
+            result[i] = launchedTokens[start + i];
+        }
+
+        return result;
+    }
+
+    function transferOwnership(address newOwner)
+        external
+        onlyOwner
+    {
+        require(newOwner != address(0), "Invalid owner");
+        owner = newOwner;
+    }
+}
